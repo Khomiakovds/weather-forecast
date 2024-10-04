@@ -1,8 +1,3 @@
-
-
-
-
-
 package main
 
 import (
@@ -10,13 +5,10 @@ import (
 	"10_1_simple_pipeline/location"
 	"10_1_simple_pipeline/predict_models"
 	"fmt"
-	"sync"
 	"time"
 )
 
 func main() {
-	var wg sync.WaitGroup
-
 	done := make(chan struct{})
 
 	go func() {
@@ -26,59 +18,67 @@ func main() {
 
 	requestsChan := forecast.RequestRandomGenerator(done)
 
-	wg.Add(2)
+	cityWeather := weatherCalculation(done, requestsChan)
 
-	cityWeather := weatherCalculation(done, requestsChan, &wg)
-
-	fullInfo := cityCoordinates(done, cityWeather, &wg)
+	fullInfo := cityCoordinates(done, cityWeather)
 
 	print(fullInfo)
-
-	wg.Wait()
 }
 
-func weatherCalculation(done <-chan struct{}, requestsChan <-chan forecast.ForecastRequest, wg *sync.WaitGroup) <-chan forecast.ForecastPrediction {
+func weatherCalculation(done <-chan struct{}, requestsChan <-chan forecast.ForecastRequest) <-chan forecast.ForecastPrediction {
 	weatherChan := make(chan forecast.ForecastPrediction)
+
 	go func() {
-		defer wg.Done()        
 		defer close(weatherChan) 
 
-		for currentRequest := range requestsChan {
+		for {
 			select {
-			case <-done:
+			case <-done: 
 				return
-			case weatherChan <- predict_models.NewModel1().Predict(currentRequest):
+			case currentRequest, ok := <-requestsChan:
+
+				if !ok {
+					return
+				}
+			
+				weatherChan <- predict_models.NewModel1().Predict(currentRequest)
 			}
 		}
 	}()
+
 	return weatherChan
 }
 
-func cityCoordinates(done <-chan struct{}, requestsChan <-chan forecast.ForecastPrediction, wg *sync.WaitGroup) chan string {
+func cityCoordinates(done <-chan struct{}, weatherChan <-chan forecast.ForecastPrediction) chan string {
 	coordinatesChan := make(chan string)
+
 	go func() {
-		defer wg.Done()           
 		defer close(coordinatesChan) 
 
-		for currentRequest := range requestsChan {
+		for {
 			select {
-			case <-done:
+			case <-done: 
 				return
-			default:
-				loc := location.FindLocation(currentRequest.Location)
+			case currentPrediction, ok := <-weatherChan:
+				if !ok {
+					
+					return
+				}
+				loc := location.FindLocation(currentPrediction.Location)
 				formattedOutput := fmt.Sprintf(
 					"Location: %s (Lat: %.6f, Long: %.6f), Date: %s, Temp: %d°C, Humidity: %d%%, Wind Speed: %d km/h",
 					loc.CityName,
 					loc.Latitude,
 					loc.Longitude,
-					currentRequest.Time.Format("2006-01-02 15:04:05"),
-					currentRequest.TemperatureCelsius,
-					currentRequest.HumidityPercent,
-					currentRequest.ProbabilityPercent)
+					currentPrediction.Time.Format("2006-01-02 15:04:05"),
+					currentPrediction.TemperatureCelsius,
+					currentPrediction.HumidityPercent,
+					currentPrediction.ProbabilityPercent)
 				coordinatesChan <- formattedOutput
 			}
 		}
 	}()
+
 	return coordinatesChan
 }
 
