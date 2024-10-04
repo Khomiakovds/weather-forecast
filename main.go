@@ -5,82 +5,80 @@ import (
 	"10_1_simple_pipeline/location"
 	"10_1_simple_pipeline/predict_models"
 	"fmt"
+	"sync"
 	"time"
 )
 
 func main() {
-	done := make(chan struct{})
-	go func(){
-		time.Sleep(5*time.Second)
-		done <- struct{}{}
-	}()
-	stopCh := make(chan struct{})
-	requestsChan := forecast.RequestRandomGenerator(stopCh)
-	
-	
-cityWether := weathercalculation(done,requestsChan)
-fullInfo := cityСoordinates(done,cityWether )
-print(fullInfo)
-	
+	var wg sync.WaitGroup
 
+	done := make(chan struct{})
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		close(done)
+	}()
+
+	requestsChan := forecast.RequestRandomGenerator(done)
+
+	wg.Add(2)
+
+	cityWeather := weatherCalculation(done, requestsChan, &wg)
+
+	fullInfo := cityCoordinates(done, cityWeather, &wg)
+
+	print(fullInfo)
+
+	wg.Wait()
 }
 
+func weatherCalculation(done <-chan struct{}, requestsChan <-chan forecast.ForecastRequest, wg *sync.WaitGroup) <-chan forecast.ForecastPrediction {
+	weatherChan := make(chan forecast.ForecastPrediction)
+	go func() {
+		defer wg.Done()        
+		defer close(weatherChan) 
 
-func weathercalculation(done <- chan struct{}, requestsChan<-chan forecast.ForecastRequest)<-chan forecast.ForecastPrediction{
-	wetherTemplate := make(chan forecast.ForecastPrediction)
-	go func(){
-		for currentRequst := range requestsChan{
-			defer close(wetherTemplate)
-			select{
-			case<-done:
+		for currentRequest := range requestsChan {
+			select {
+			case <-done:
 				return
-			case wetherTemplate <- predict_models.NewModel1().Predict(currentRequst):
-				
-	
+			case weatherChan <- predict_models.NewModel1().Predict(currentRequest):
 			}
-			
 		}
 	}()
-	
-	return wetherTemplate
+	return weatherChan
 }
-func cityСoordinates(done<- chan struct{},requestsChan<-chan forecast.ForecastPrediction)chan string{
-	coordinateWetherChan := make(chan string)
-	go func(){
-		defer close(coordinateWetherChan)
-		select{
-		case <-done:
-			return
-		default:
-			for currentRequst := range requestsChan{
-				locatName := location.FindLocation(currentRequst .Location)
+
+func cityCoordinates(done <-chan struct{}, requestsChan <-chan forecast.ForecastPrediction, wg *sync.WaitGroup) chan string {
+	coordinatesChan := make(chan string)
+	go func() {
+		defer wg.Done()           
+		defer close(coordinatesChan) 
+
+		for currentRequest := range requestsChan {
+			select {
+			case <-done:
+				return
+			default:
+				loc := location.FindLocation(currentRequest.Location)
 				formattedOutput := fmt.Sprintf(
 					"Location: %s (Lat: %.6f, Long: %.6f), Date: %s, Temp: %d°C, Humidity: %d%%, Wind Speed: %d km/h",
-					locatName.CityName,                               
-					locatName.Latitude,                           
-					locatName.Longitude,                          
-					currentRequst .Time.Format("2006-01-02 15:04:05"),     
-					currentRequst .TemperatureCelsius,                            
-					currentRequst .HumidityPercent ,                               
-					currentRequst .ProbabilityPercent)   
-				coordinateWetherChan <- formattedOutput
-			
+					loc.CityName,
+					loc.Latitude,
+					loc.Longitude,
+					currentRequest.Time.Format("2006-01-02 15:04:05"),
+					currentRequest.TemperatureCelsius,
+					currentRequest.HumidityPercent,
+					currentRequest.ProbabilityPercent)
+				coordinatesChan <- formattedOutput
 			}
-
 		}
-		
 	}()
-	return coordinateWetherChan
-
+	return coordinatesChan
 }
-func print(requestsChan<-chan string ){
-	for i := range requestsChan{
-		fmt.Println(i)
+
+func print(resultsChan <-chan string) {
+	for result := range resultsChan {
+		fmt.Println(result)
 	}
 }
-
-
-
-
-
-
