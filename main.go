@@ -9,6 +9,7 @@ import (
 )
 
 func main() {
+
 	done := make(chan struct{})
 
 	go func() {
@@ -18,30 +19,40 @@ func main() {
 
 	requestsChan := forecast.RequestRandomGenerator(done)
 
-	cityWeather := weatherCalculation(done, requestsChan)
+	model := predict_models.NewModel1()
+
+	cityWeather := weatherCalculation(done, requestsChan, model)
 
 	fullInfo := cityCoordinates(done, cityWeather)
 
 	print(fullInfo)
 }
 
-func weatherCalculation(done <-chan struct{}, requestsChan <-chan forecast.ForecastRequest) <-chan forecast.ForecastPrediction {
+func weatherCalculation(done <-chan struct{}, requestsChan <-chan forecast.ForecastRequest, model *predict_models.Model) <-chan forecast.ForecastPrediction {
 	weatherChan := make(chan forecast.ForecastPrediction)
+
+	rateLimit := time.NewTicker(time.Minute / 60)
 
 	go func() {
 		defer close(weatherChan) 
+		defer rateLimit.Stop()   
 
 		for {
 			select {
 			case <-done: 
 				return
 			case currentRequest, ok := <-requestsChan:
-
 				if !ok {
+					
 					return
 				}
-			
-				weatherChan <- predict_models.NewModel1().Predict(currentRequest)
+				select {
+				case <-rateLimit.C: 
+					
+					weatherChan <- model.Predict(currentRequest)
+				case <-done:
+					return
+				}
 			}
 		}
 	}()
